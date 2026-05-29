@@ -72,7 +72,7 @@ if codigo_idioma and codigo_idioma.startswith("en"):
         "btn_logout": "Log Out"
     })
 
-# Inicializar IA Groq (¡Corregido el cierre de comillas y usando API Key segura!)
+# Inicializar IA Groq (¡Usa la API Key de forma segura a través de st.secrets!)
 api_key = st.secrets["GROQ_API_KEY"]
 llm = ChatGroq(groq_api_key=api_key, model_name="llama-3.1-8b-instant", temperature=0.5)
 
@@ -288,13 +288,13 @@ else:
                             atributos_str = "\n".join(datos_mouser["atributos"])
                             prompt = f"""
                             Actúa como un Profesor de Electrónica de nivel superior y especialista en Mecatrónica.
-                            Generá una Ficha Didáctica Técnica para el I '{datos_mouser['modelo']}'.
+                            Generá una Ficha Didáctica Técnica para el componente '{datos_mouser['modelo']}'.
                             Responder en: {idioma_usuario}.
                             Estructura: 1. Especificaciones de Ingeniería, 2. Parámetros Críticos, 3. Aplicación en Control.
                             Datos Mouser: Fabricante: {datos_mouser['fabricante']} | Descripción: {datos_mouser['descripcion']} | Atributos: {atributos_str}
                             """
                         else:
-                            prompt = f"Actúa como un ingeniero especialista. Respondé de forma técnica sobre el I: {pregunta_usuario}. Idioma: {idioma_usuario}."
+                            prompt = f"Actúa como un ingeniero especialista. Respondé de forma técnica sobre el componente: {pregunta_usuario}. Idioma: {idioma_usuario}."
                     else:
                         historial_texto = "".join([f"{'Técnico' if m['rol']=='user' else 'Especialista'}: {m['contenido']}\n" for m in mensajes_actuales[:-1]])
                         prompt = f"Profesor de Electrónica. Responde considerando el historial.\nHistorial:\n{historial_texto}\nConsulta: {pregunta_usuario}\nIdioma: {idioma_usuario}."
