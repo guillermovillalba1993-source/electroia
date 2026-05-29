@@ -24,6 +24,23 @@ try:
 except Exception:
     st.error("Error de conexión con el servidor de autenticación.")
 
+# 🚀 1. DETECTOR DE REDIRECCIONES (Captura los clics desde el correo electrónico)
+query_params = st.query_params
+
+# Si viene del mail de confirmación de cuenta nueva
+if "access_token" in query_params and "refresh_token" in query_params:
+    try:
+        supabase.auth.set_session(query_params["access_token"], query_params["refresh_token"])
+        st.success("¡Cuenta confirmada con éxito! Ya podés iniciar sesión.")
+        st.session_state.vista_auth = "login"
+        st.query_params.clear()
+    except Exception:
+        pass
+
+# Si viene del mail de "Olvidé mi contraseña"
+if "type" in query_params and query_params["type"] == "recovery":
+    st.session_state.vista_auth = "cambiar_clave"
+
 # 🌐 Detección de Idioma Simplificada
 codigo_idioma = st_javascript("window.navigator.language")
 idioma_usuario = "español"
@@ -55,9 +72,9 @@ if codigo_idioma and codigo_idioma.startswith("en"):
         "btn_logout": "Log Out"
     })
 
-# Inicializar IA Groq
-GROQ_API_KEY = "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"
-llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name="llama-3.1-8b-instant", temperature=0.5)
+# Inicializar IA Groq (¡Corregido el cierre de comillas y usando API Key segura!)
+api_key = st.secrets["GROQ_API_KEY"]
+llm = ChatGroq(groq_api_key=api_key, model_name="llama-3.1-8b-instant", temperature=0.5)
 
 # Estados de sesión básicos
 if "usuario" not in st.session_state:
@@ -70,15 +87,13 @@ if st.session_state.usuario is None:
     session_guardada = cookies.get("electroia_session")
     if session_guardada:
         try:
-            # Intentamos recuperar la sesión en Supabase usando el refresh_token guardado
             res = supabase.auth.set_session(session_guardada.get("access_token"), session_guardada.get("refresh_token"))
             st.session_state.usuario = res.user
         except Exception:
-            # Si el token venció o falló, borramos la cookie vieja
             cookies.remove("electroia_session")
 
 # ==========================================
-# PANTALLA 1: AUTENTICACIÓN (LOGIN / REGISTRO)
+# PANTALLA 1: AUTENTICACIÓN / RECUPERACIÓN
 # ==========================================
 if st.session_state.usuario is None:
     
@@ -89,7 +104,6 @@ if st.session_state.usuario is None:
         email = st.text_input("Correo Electrónico", key="login_email")
         password = st.text_input("Contraseña", type="password", key="login_pass")
         
-        # 🔘 El nuevo checkbox de Recordar Usuario
         recordar = st.checkbox("Recordar mi sesión en este equipo")
         
         col1, col2 = st.columns(2)
@@ -100,7 +114,6 @@ if st.session_state.usuario is None:
                         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                         st.session_state.usuario = res.user
                         
-                        # Si marcó "Recordar", guardamos los tokens en la cookie
                         if recordar and res.session:
                             cookies.set("electroia_session", {
                                 "access_token": res.session.access_token,
@@ -120,6 +133,20 @@ if st.session_state.usuario is None:
             if st.button("Crear una cuenta nueva", use_container_width=True):
                 st.session_state.vista_auth = "registro"
                 st.rerun()
+        
+        st.write("---")
+        # Formulario expandible para no romper la estética si no se necesita
+        with st.expander("¿Olvidaste tu contraseña?"):
+            email_recupero = st.text_input("Ingresá tu correo para recuperar acceso:")
+            if st.button("Enviar correo de restablecimiento"):
+                if email_recupero:
+                    try:
+                        supabase.auth.reset_password_email(email_recupero)
+                        st.success("📩 Enlace enviado. Revisá tu casilla de correo o correo no deseado (spam).")
+                    except Exception as ex:
+                        st.error(f"Error: {ex}")
+                else:
+                    st.warning("Escribí un correo válido.")
 
     # --- VISTA DE FORMULARIO DE REGISTRO ---
     elif st.session_state.vista_auth == "registro":
@@ -161,6 +188,33 @@ if st.session_state.usuario is None:
                 st.session_state.vista_auth = "login"
                 st.rerun()
 
+    # --- VISTA DE CAMBIAR CONTRASEÑA (Llega desde el mail de olvido) ---
+    elif st.session_state.vista_auth == "cambiar_clave":
+        st.title("🔑 Restablecer Contraseña")
+        st.write("Ingresá los nuevos datos de acceso para tu cuenta.")
+        
+        nueva_pass = st.text_input("Nueva Contraseña", type="password")
+        confirmar_pass = st.text_input("Confirmar Nueva Contraseña", type="password")
+        
+        if st.button("Actualizar mi contraseña", use_container_width=True):
+            if nueva_pass and confirmar_pass:
+                if nueva_pass == confirmar_pass:
+                    if len(nueva_pass) >= 6:
+                        try:
+                            supabase.auth.update_user({"password": nueva_pass})
+                            st.success("¡Tu contraseña fue actualizada! Ya podés ingresar.")
+                            st.session_state.vista_auth = "login"
+                            st.query_params.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo guardar la contraseña: {e}")
+                    else:
+                        st.error("La contraseña debe tener al menos 6 caracteres.")
+                else:
+                    st.error("Las contraseñas no coinciden.")
+            else:
+                st.warning("Completá ambos campos.")
+
 # ==========================================
 # PANTALLA 2: APLICACIÓN PRINCIPAL (LOGUEADO)
 # ==========================================
@@ -196,7 +250,6 @@ else:
             try: supabase.auth.sign_out()
             except Exception: pass
             
-            # Al cerrar sesión explícitamente, destruimos la cookie para que no vuelva a entrar solo
             cookies.remove("electroia_session")
             
             st.session_state.usuario = None
