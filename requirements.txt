@@ -1,0 +1,5 @@
+streamlit
+supabase
+langchain-groq
+streamlit-cookies-controller
+streamlit-javascript
