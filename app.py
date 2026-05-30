@@ -147,7 +147,6 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
             if st.button("Enviar correo de restablecimiento"):
                 if email_recupero:
                     try:
-                        # Mandamos el correo de recupero vinculando la URL exacta de tu app
                         supabase.auth.reset_password_email(email_recupero)
                         st.success("📩 Enlace enviado. Revisá tu casilla de correo o correo no deseado (spam).")
                     except Exception as ex:
@@ -155,52 +154,64 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
                 else:
                     st.warning("Escribí un correo válido.")
 
-    # --- VISTA DE FORMULARIO DE REGISTRO ---
+    # --- VISTA DE FORMULARIO DE REGISTRO (¡CORREGIDO PARA CELULARES!) ---
     elif st.session_state.vista_auth == "registro":
         st.title("📝 Formulario de Registro")
         st.write("Completa tus datos para crear tu cuenta de acceso.")
         
-        nombre = st.text_input("Nombre")
-        apellido = st.text_input("Apellido")
-        email_reg = st.text_input("Correo Electrónico")
-        pass_reg = st.text_input("Crear Contraseña", type="password")
-        pass_conf = st.text_input("Confirmar Contraseña", type="password")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Confirmar Registro", use_container_width=True):
-                if nombre and apellido and email_reg and pass_reg and pass_conf:
-                    if pass_reg == pass_conf:
-                        try:
-                            supabase.auth.sign_up({
-                                "email": email_reg, 
-                                "password": pass_reg,
-                                "options": {
-                                    "data": {
-                                        "first_name": nombre,
-                                        "last_name": apellido
-                                    }
+        # Agrupamos los campos en un formulario nativo para asegurar la lectura estable en celulares
+        with st.form("form_registro_mobile"):
+            nombre = st.text_input("Nombre")
+            apellido = st.text_input("Apellido")
+            email_reg = st.text_input("Correo Electrónico")
+            pass_reg = st.text_input("Crear Contraseña", type="password")
+            pass_conf = st.text_input("Confirmar Contraseña", type="password")
+            
+            # Botón exclusivo para procesar el formulario completo
+            btn_confirmar = st.form_submit_button("Confirmar Registro", use_container_width=True)
+            
+        if btn_confirmar:
+            # Limpieza preventiva de espacios invisibles
+            nombre = nombre.strip()
+            apellido = apellido.strip()
+            email_reg = email_reg.strip()
+            
+            if nombre and apellido and email_reg and pass_reg and pass_conf:
+                if pass_reg == pass_conf:
+                    try:
+                        # Al estar desactivado el 'Confirm email' en tu panel, se activa e ingresa en el acto
+                        res = supabase.auth.sign_up({
+                            "email": email_reg, 
+                            "password": pass_reg,
+                            "options": {
+                                "data": {
+                                    "first_name": nombre,
+                                    "last_name": apellido
                                 }
-                            })
-                            st.success(t["msg_check_email"])
-                        except Exception as e:
-                            st.error(f"Error al registrar: {e}")
-                    else:
-                        st.error("❌ Las contraseñas no coinciden. Verificalas.")
+                            }
+                        })
+                        
+                        if res.user:
+                            st.session_state.usuario = res.user
+                            st.success("¡Cuenta creada con éxito!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar: {e}")
                 else:
-                    st.warning("⚠️ Por favor, completa todos los campos del formulario.")
+                    st.error("❌ Las contraseñas no coinciden. Verificalas.")
+            else:
+                st.warning("⚠️ Por favor, completa todos los campos del formulario.")
         
-        with col2:
-            if st.button("Volver al Login", use_container_width=True):
-                st.session_state.vista_auth = "login"
-                st.rerun()
+        # Botón de escape (Queda fuera del st.form)
+        if st.button("Volver al Login", use_container_width=True):
+            st.session_state.vista_auth = "login"
+            st.rerun()
 
-    # --- VISTA DE CAMBIAR CONTRASEÑA (¡CORREGIDA Y COMPLETA!) ---
+    # --- VISTA DE CAMBIAR CONTRASEÑA ---
     elif st.session_state.vista_auth == "cambiar_clave":
         st.title("🔑 Restablecer Contraseña")
         st.write("Ingresá los nuevos datos de acceso para tu cuenta.")
         
-        # Mostramos de forma informativa a qué cuenta se le va a modificar la clave
         if "usuario_recupero" in st.session_state and st.session_state.usuario_recupero:
             st.info(f"Modificando la contraseña para el correo: **{st.session_state.usuario_recupero.email}**")
         
@@ -212,24 +223,22 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
                 if nueva_pass == confirmar_pass:
                     if len(nueva_pass) >= 6:
                         try:
-                            # Ejecuta la actualización real sobre el usuario validado por el link
                             supabase.auth.update_user({"password": nueva_pass})
-                            st.success("¡Tu contraseña fue actualizada con éxito! Ya podés ingresar con tus nuevas credenciales.")
+                            st.success("¡Tu contraseña fue actualizada con éxito! Ya podés ingresar.")
                             
-                            # Limpieza completa de variables temporales y parámetros de URL
                             if "usuario_recupero" in st.session_state:
                                 del st.session_state.usuario_recupero
                             st.session_state.vista_auth = "login"
                             st.query_params.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"No se pudo guardar la contraseña. El token puede haber expirado: {e}")
+                            st.error(f"No se pudo guardar la contraseña: {e}")
                     else:
                         st.error("La contraseña debe tener al menos 6 caracteres.")
                 else:
-                    st.error("Las contraseñas no coinciden. Asegurate de escribirlas iguales.")
+                    st.error("Las contraseñas no coinciden.")
             else:
-                st.warning("Completá ambos campos para continuar.")
+                st.warning("Completá ambos campos.")
 
 # ==========================================
 # PANTALLA 2: APLICACIÓN PRINCIPAL (LOGUEADO)
