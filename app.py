@@ -41,46 +41,23 @@ if "chat_actual" not in st.session_state:
     st.session_state.chat_actual = None
 
 # ======================================================================
-# 🚀 2. DETECTOR DE REDIRECCIONES DE CORREO (UBICACIÓN CORRECTA - ARRIBA)
+# 🚀 2. DETECTOR DE REDIRECCIONES (NUEVO MÉTODO TOKEN HASH NATIVO)
 # ======================================================================
 query_params = st.query_params
 
-es_recupero = False
-token_temporal = None
-
-# --- ESTRATEGIA A: Intentar leer parámetros normales (?type=recovery) ---
-if "type" in query_params and query_params.get("type") == "recovery":
-    es_recupero = True
-    token_temporal = query_params.get("access_token")
-elif "access_token" in query_params and query_params.get("type") == "recovery":
-    es_recupero = True
-    token_temporal = query_params.get("access_token")
-
-# --- ESTRATEGIA B: Usar JavaScript por si Supabase manda un numeral (#access_token=...) ---
-if not es_recupero:
-    url_completa = st_javascript("window.location.href")
-    if url_completa and ("#access_token=" in url_completa or "type=recovery" in url_completa):
-        es_recupero = True
-        try:
-            if "#access_token=" in url_completa:
-                token_temporal = url_completa.split("#access_token=")[1].split("&")[0]
-            elif "access_token=" in url_completa:
-                token_temporal = url_completa.split("access_token=")[1].split("&")[0]
-        except Exception:
-            pass
-
-# Si confirmamos que viene del mail de recuperación, congelamos la pantalla en cambiar_clave
-if es_recupero:
+# Detectamos si la URL trae el token explícito armado en el mail de Supabase
+if "token" in query_params and query_params.get("type") == "recovery":
+    token_hash = query_params["token"]
     try:
-        if token_temporal and "usuario_recupero" not in st.session_state:
-            res_recovery = supabase.auth.set_session(token_temporal, "")
-            st.session_state.usuario_recupero = res_recovery.user
+        # Validamos el token exacto y Supabase nos devuelve al usuario dueño del mail
+        res = supabase.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
+        st.session_state.usuario_recupero = res.user
         st.session_state.vista_auth = "cambiar_clave"
     except Exception as e:
-        st.error(f"Error al validar el enlace: {e}")
-        st.session_state.vista_auth = "cambiar_clave"
+        st.error("El enlace de recuperación ya fue usado o expiró. Por favor, solicitá uno nuevo.")
+        st.session_state.vista_auth = "login"
 
-# CASO B: Viene desde el mail de confirmación de cuenta nueva
+# Caso de mail de confirmación de cuenta nueva
 elif "access_token" in query_params and "refresh_token" in query_params:
     try:
         supabase.auth.set_session(query_params["access_token"], query_params["refresh_token"])
@@ -91,9 +68,9 @@ elif "access_token" in query_params and "refresh_token" in query_params:
         pass
 
 # ======================================================================
-# 🔄 3. PERSISTENCIA POR COOKIES (AUTOLOGIN - SOLO SI NO RECUPERA CLAVE)
+# 🔄 3. PERSISTENCIA POR COOKIES (AUTOLOGIN)
 # ======================================================================
-if st.session_state.usuario is None and st.session_state.vista_auth != "cambiar_clave":
+elif st.session_state.usuario is None and st.session_state.vista_auth != "cambiar_clave":
     session_guardada = cookies.get("electroia_session")
     if session_guardada:
         try:
@@ -168,7 +145,7 @@ if st.session_state.usuario and not st.session_state.historial_conversaciones:
 # ======================================================================
 if st.session_state.usuario is None:
     
-    # --- VISTA A: CAMBIAR CONTRASEÑA (LA PÁGINA QUE TE MUESTRA EL MAIL) ---
+    # --- VISTA A: CAMBIAR CONTRASEÑA ---
     if st.session_state.vista_auth == "cambiar_clave":
         st.title("🔑 Restablecer Contraseña")
         st.write("Ingresá los nuevos datos de acceso para tu cuenta de ElectroIA.")
