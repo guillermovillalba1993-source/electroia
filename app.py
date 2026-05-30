@@ -48,14 +48,23 @@ query_params = st.query_params
 # Detectamos si la URL trae el token explícito armado en el mail de Supabase
 if "token" in query_params and query_params.get("type") == "recovery":
     token_hash = query_params["token"]
-    try:
-        # Validamos el token exacto y Supabase nos devuelve al usuario dueño del mail
-        res = supabase.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
-        st.session_state.usuario_recupero = res.user
-        st.session_state.vista_auth = "cambiar_clave"
-    except Exception as e:
-        st.error("El enlace de recuperación ya fue usado o expiró. Por favor, solicitá uno nuevo.")
-        st.session_state.vista_auth = "login"
+    
+    # Solo validamos si NO lo hemos validado ya en esta sesión
+    if "usuario_recupero" not in st.session_state:
+        try:
+            # Validamos el token exacto de un solo uso
+            res = supabase.auth.verify_otp({"token_hash": token_hash, "type": "recovery"})
+            st.session_state.usuario_recupero = res.user
+            st.session_state.vista_auth = "cambiar_clave"
+            
+            # ¡CLAVE! Limpiamos la URL para no gastar el token dos veces y recargamos
+            st.query_params.clear()
+            st.rerun()
+            
+        except Exception as e:
+            st.error("El enlace de recuperación ya fue usado o expiró. Por favor, solicitá uno nuevo.")
+            st.session_state.vista_auth = "login"
+            st.query_params.clear()
 
 # Caso de mail de confirmación de cuenta nueva
 elif "access_token" in query_params and "refresh_token" in query_params:
