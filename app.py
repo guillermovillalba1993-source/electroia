@@ -6,10 +6,11 @@ from supabase import create_client, Client
 from streamlit_cookies_controller import CookieController
 import json
 
-# Configuración de página
+# ======================================================================
+# 1. CONFIGURACIÓN INICIAL Y COOKIES
+# ======================================================================
 st.set_page_config(page_title="ElectroIA", page_icon="🎓", layout="centered")
 
-# 🍪 1. Inicializar controlador de cookies de forma segura en session_state (Evita reseteos)
 if "cookies_inicializadas" not in st.session_state:
     st.session_state.cookies_controller = CookieController()
     st.session_state.cookies_inicializadas = True
@@ -29,7 +30,7 @@ try:
 except Exception:
     st.error("Error de conexión con el servidor de autenticación.")
 
-# Estados de sesión básicos iniciales necesarios para los detectores
+# Inicializar estados de sesión esenciales
 if "vista_auth" not in st.session_state:
     st.session_state.vista_auth = "login"
 if "usuario" not in st.session_state:
@@ -39,7 +40,33 @@ if "historial_conversaciones" not in st.session_state:
 if "chat_actual" not in st.session_state:
     st.session_state.chat_actual = None
 
-# 🔄 PERSISTENCIA AUTOMÁTICA: Si hay sesión guardada en cookies, la recuperamos de inmediato
+# ======================================================================
+# 🚀 2. DETECTOR DE REDIRECCIONES DE CORREO (PRIORIDAD ABSOLUTA)
+# ======================================================================
+query_params = st.query_params
+
+# CASO A: Viene desde el mail de recuperación de contraseña (tipo Facebook)
+if "access_token" in query_params and query_params.get("type") == "recovery":
+    try:
+        res_recovery = supabase.auth.set_session(query_params["access_token"], query_params.get("refresh_token", ""))
+        st.session_state.usuario_recupero = res_recovery.user
+        st.session_state.vista_auth = "cambiar_clave"
+    except Exception as e:
+        st.error(f"El enlace de recuperación expiró o es inválido: {e}")
+
+# CASO B: Viene desde el mail de confirmación de cuenta nueva
+elif "access_token" in query_params and "refresh_token" in query_params:
+    try:
+        supabase.auth.set_session(query_params["access_token"], query_params["refresh_token"])
+        st.success("¡Cuenta confirmada con éxito! Ya podés iniciar sesión.")
+        st.session_state.vista_auth = "login"
+        st.query_params.clear()
+    except Exception:
+        pass
+
+# ======================================================================
+# 🔄 3. PERSISTENCIA POR COOKIES (AUTOLOGIN)
+# ======================================================================
 if st.session_state.usuario is None and st.session_state.vista_auth != "cambiar_clave":
     session_guardada = cookies.get("electroia_session")
     if session_guardada:
@@ -49,40 +76,19 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "cambiar_
         except Exception:
             cookies.remove("electroia_session")
 
-# 🚀 2. DETECTOR DE REDIRECCIONES DE CORREO (Validación y Recuperación Corregido)
-query_params = st.query_params
-
-# Caso A: Si viene del mail de confirmación de cuenta nueva
-if "access_token" in query_params and "refresh_token" in query_params and query_params.get("type") != "recovery":
-    try:
-        supabase.auth.set_session(query_params["access_token"], query_params["refresh_token"])
-        st.success("¡Cuenta confirmada con éxito! Ya podés iniciar sesión.")
-        st.session_state.vista_auth = "login"
-        st.query_params.clear()
-    except Exception:
-        pass
-
-# Caso B: Si viene del mail de "Olvidé mi contraseña" (Restablecimiento de clave)
-if "access_token" in query_params and query_params.get("type") == "recovery":
-    try:
-        res_recovery = supabase.auth.set_session(query_params["access_token"], query_params.get("refresh_token", ""))
-        st.session_state.usuario_recupero = res_recovery.user
-        st.session_state.vista_auth = "cambiar_clave"
-    except Exception as e:
-        st.error(f"El enlace de recuperación expiró o es inválido: {e}")
-
-# 🌐 Detección de Idioma Simplificada e Input Placeholder Mejorado
+# ======================================================================
+# 🌐 4. IDIOMA Y CONFIGURACIÓN DE MODELOS IA
+# ======================================================================
 codigo_idioma = st_javascript("window.navigator.language")
 idioma_usuario = "español"
 t = {
     "subtitulo": "Escribí el modelo de un componente para generar su ficha o consultale tus dudas de taller.",
-    "input_placeholder": "Diga qué componente electrónico querés buscar...",  # <- ¡MEJORADO!
+    "input_placeholder": "Diga qué componente electrónico querés buscar...",
     "spinner": "Analizando parámetros en la nube...",
     "nuevo_chat": "Nuevo Chat",
     "titulo_auth": "Acceso a ElectroIA",
     "btn_login": "Iniciar Sesión",
     "btn_register": "Registrarse",
-    "msg_check_email": "📢 ¡Cuenta creada con éxito! Ya podés ingresar.",
     "msg_welcome": "Sesión iniciada como: ",
     "btn_logout": "Cerrar Sesión"
 }
@@ -97,16 +103,15 @@ if codigo_idioma and codigo_idioma.startswith("en"):
         "titulo_auth": "Access to ElectroIA",
         "btn_login": "Log In",
         "btn_register": "Sign Up",
-        "msg_check_email": "📢 Account successfully created! You can now log in.",
         "msg_welcome": "Logged in as: ",
         "btn_logout": "Log Out"
     })
 
-# Inicializar IA Groq (Usa la API Key de forma segura a través de st.secrets)
+# Cargar API Key e inicializar Groq
 api_key = st.secrets["GROQ_API_KEY"]
 llm = ChatGroq(groq_api_key=api_key, model_name="llama-3.1-8b-instant", temperature=0.5)
 
-# 💾 3. FUNCIONES DE PERSISTENCIA REAL EN LA BASE DE DATOS SUPABASE
+# Funciones de base de datos para el historial persistente
 def cargar_historial_desde_db(user_id):
     try:
         res = supabase.table("chats").select("*").eq("user_id", user_id).order("updated_at", desc=False).execute()
@@ -128,22 +133,55 @@ def guardar_chat_en_db(user_id, chat_id, conversacion):
     except Exception:
         pass
 
-# Sincronizar el historial si el usuario acaba de loguearse
+# Sincronizar historial al entrar
 if st.session_state.usuario and not st.session_state.historial_conversaciones:
     st.session_state.historial_conversaciones = cargar_historial_desde_db(st.session_state.usuario.id)
 
-# ==========================================
-# PANTALLA 1: AUTENTICACIÓN / RECUPERACIÓN
-# ==========================================
-if st.session_state.usuario is None and st.session_state.vista_auth != "logueado_temporal":
+# ======================================================================
+# 🔑 PANTALLA 1: CONTROL DE ACCESO
+# ======================================================================
+if st.session_state.usuario is None:
     
-    # --- VISTA DE INICIAR SESIÓN ---
-    if st.session_state.vista_auth == "login":
+    # --- VISTA A: CAMBIAR CONTRASEÑA (VINCULADA AL CORREO DE RECUPERACIÓN) ---
+    if st.session_state.vista_auth == "cambiar_clave":
+        st.title("🔑 Restablecer Contraseña")
+        st.write("Ingresá los nuevos datos de acceso para tu cuenta de ElectroIA.")
+        
+        if "usuario_recupero" in st.session_state and st.session_state.usuario_recupero:
+            st.info(f"Modificando la contraseña para: **{st.session_state.usuario_recupero.email}**")
+        
+        nueva_pass = st.text_input("Contraseña Nueva", type="password", key="new_password_input")
+        confirmar_pass = st.text_input("Vuelve a escribir la contraseña nueva", type="password", key="confirm_password_input")
+        
+        if st.button("Confirmar Nueva Contraseña", use_container_width=True):
+            if nueva_pass and confirmar_pass:
+                if nueva_pass == confirmar_pass:
+                    if len(nueva_pass) >= 6:
+                        try:
+                            supabase.auth.update_user({"password": nueva_pass})
+                            st.success("¡Tu contraseña fue actualizada con éxito! Ya podés ingresar.")
+                            
+                            if "usuario_recupero" in st.session_state:
+                                del st.session_state.usuario_recupero
+                            st.session_state.vista_auth = "login"
+                            st.query_params.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo guardar la contraseña: {e}")
+                    else:
+                        st.error("La contraseña debe tener al menos 6 caracteres.")
+                else:
+                    st.error("❌ Las contraseñas no coinciden. Verificá la escritura.")
+            else:
+                st.warning("⚠️ Completá ambos campos.")
+
+    # --- VISTA B: INICIAR SESIÓN COMÚN ---
+    elif st.session_state.vista_auth == "login":
         st.title(t["titulo_auth"])
         
         email = st.text_input("Correo Electrónico", key="login_email")
         password = st.text_input("Contraseña", type="password", key="login_pass")
-        recordar = st.checkbox("Recordar mi sesión en este equipo", value=True) # <- Activado por defecto
+        recordar = st.checkbox("Recordar mi sesión en este equipo", value=True)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -159,7 +197,6 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
                                 "refresh_token": res.session.refresh_token
                             })
                         
-                        # Cargar el historial guardado al entrar
                         st.session_state.historial_conversaciones = cargar_historial_desde_db(res.user.id)
                         st.rerun()
                     except Exception as e:
@@ -178,13 +215,13 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
                 if email_recupero:
                     try:
                         supabase.auth.reset_password_email(email_recupero)
-                        st.success("📩 Enlace enviado. Revisá tu casilla de correo o correo no deseado (spam).")
+                        st.success("📩 Enlace enviado. Revisá tu casilla de correo o spam.")
                     except Exception as ex:
                         st.error(f"Error: {ex}")
                 else:
                     st.warning("Escribí un correo válido.")
 
-    # --- VISTA DE FORMULARIO DE REGISTRO (Mantiene st.form nativo) ---
+    # --- VISTA C: FORMULARIO DE REGISTRO SEGURO ---
     elif st.session_state.vista_auth == "registro":
         st.title("📝 Formulario de Registro")
         st.write("Completa tus datos para crear tu cuenta de acceso.")
@@ -198,24 +235,19 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
             btn_confirmar = st.form_submit_button("Confirmar Registro", use_container_width=True)
             
         if btn_confirmar:
-            nombre = nombre.strip()
-            apellido = apellido.strip()
-            email_reg = email_reg.strip()
-            
-            if nombre and apellido and email_reg and pass_reg and pass_conf:
+            if nombre.strip() and apellido.strip() and email_reg.strip() and pass_reg and pass_conf:
                 if pass_reg == pass_conf:
                     try:
                         res = supabase.auth.sign_up({
-                            "email": email_reg, 
+                            "email": email_reg.strip(), 
                             "password": pass_reg,
                             "options": {
                                 "data": {
-                                    "first_name": nombre,
-                                    "last_name": apellido
+                                    "first_name": nombre.strip(),
+                                    "last_name": apellido.strip()
                                 }
                             }
                         })
-                        
                         if res.user:
                             st.session_state.usuario = res.user
                             st.success("¡Cuenta creada con éxito!")
@@ -231,43 +263,9 @@ if st.session_state.usuario is None and st.session_state.vista_auth != "logueado
             st.session_state.vista_auth = "login"
             st.rerun()
 
-    # --- VISTA DE CAMBIAR CONTRASEÑA ---
-    elif st.session_state.vista_auth == "cambiar_clave":
-        st.title("🔑 Restablecer Contraseña")
-        st.write("Ingresá los nuevos datos de acceso para tu cuenta.")
-        
-        if "usuario_recupero" in st.session_state and st.session_state.usuario_recupero:
-            st.info(f"Modificando la contraseña para el correo: **{st.session_state.usuario_recupero.email}**")
-        
-        nueva_pass = st.text_input("Nueva Contraseña", type="password", key="new_password_input")
-        confirmar_pass = st.text_input("Repetir Contraseña", type="password", key="confirm_password_input")
-        
-        if st.button("Confirmar Nueva Contraseña", use_container_width=True):
-            if nueva_pass and confirmar_pass:
-                if nueva_pass == confirmar_pass:
-                    if len(nueva_pass) >= 6:
-                        try:
-                            # Guarda de manera efectiva el cambio de contraseña en Supabase Auth
-                            supabase.auth.update_user({"password": nueva_pass})
-                            st.success("¡Tu contraseña fue actualizada con éxito! Ya podés ingresar.")
-                            
-                            if "usuario_recupero" in st.session_state:
-                                del st.session_state.usuario_recupero
-                            st.session_state.vista_auth = "login"
-                            st.query_params.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"No se pudo guardar la contraseña: {e}")
-                    else:
-                        st.error("La contraseña debe tener al menos 6 caracteres.")
-                else:
-                    st.error("Las contraseñas no coinciden.")
-            else:
-                st.warning("Completá ambos campos.")
-
-# ==========================================
-# PANTALLA 2: APLICACIÓN PRINCIPAL (LOGUEADO)
-# ==========================================
+# ======================================================================
+# 🤖 PANTALLA 2: APLICACIÓN PRINCIPAL (SI EL USUARIO ESTÁ LOGUEADO)
+# ======================================================================
 else:
     with st.sidebar:
         metadatos = st.session_state.usuario.user_metadata if st.session_state.usuario.user_metadata else {}
@@ -297,13 +295,13 @@ else:
             except Exception: pass
             
             cookies.remove("electroia_session")
-            
             st.session_state.usuario = None
             st.session_state.historial_conversaciones = {}
             st.session_state.chat_actual = None
             st.session_state.vista_auth = "login"
             st.rerun()
 
+    # Manejo del chat actual por defecto
     if st.session_state.chat_actual is None:
         st.session_state.chat_actual = "Chat 1"
         if "Chat 1" not in st.session_state.historial_conversaciones:
@@ -314,10 +312,12 @@ else:
     st.title("ElectroIA")
     st.write(t["subtitulo"])
 
+    # Renderizar mensajes históricos en la interfaz
     for msj in mensajes_actuales:
         with st.chat_message(msj["rol"]):
             st.markdown(msj["contenido"])
 
+    # Entrada del chat del usuario
     if pregunta_usuario := st.chat_input(t["input_placeholder"]):
         with st.chat_message("user"):
             st.markdown(pregunta_usuario)
@@ -328,6 +328,7 @@ else:
                 try:
                     palabras = pregunta_usuario.strip().split()
                     
+                    # Si es una sola palabra, asumimos búsqueda de componente en buscador.py
                     if len(palabras) == 1 and len(mensajes_actuales) <= 2:
                         datos_mouser = buscar_datos_componente(pregunta_usuario)
                         if datos_mouser:
@@ -349,7 +350,7 @@ else:
                     st.markdown(respuesta.content)
                     mensajes_actuales.append({"rol": "assistant", "contenido": respuesta.content})
                     
-                    # 💾 GUARDADO AUTOMÁTICO EN SUPABASE AL AGREGAR NUEVO MENSAJE
+                    # Guardar automáticamente la conversación actualizada en Supabase
                     guardar_chat_en_db(st.session_state.usuario.id, st.session_state.chat_actual, mensajes_actuales)
                     st.rerun()
                 except Exception as e:
