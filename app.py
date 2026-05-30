@@ -17,7 +17,7 @@ if "cookies_inicializadas" not in st.session_state:
 
 cookies = st.session_state.cookies_controller
 
-# 🔌 Conexión Supabase
+# 🔌 Conexión Supabase (La Ultrabase)
 SUPABASE_URL = "https://jyxlfttrbynepdwhxlom.supabase.co"
 SUPABASE_KEY = "sb_publishable_XbbivjLYo2KEZm8d_KemMw_yJMMOnn1"
 
@@ -41,18 +41,44 @@ if "chat_actual" not in st.session_state:
     st.session_state.chat_actual = None
 
 # ======================================================================
-# 🚀 2. DETECTOR DE REDIRECCIONES DE CORREO (PRIORIDAD ABSOLUTA)
+# 🚀 2. DETECTOR DE REDIRECCIONES DE CORREO (UBICACIÓN CORRECTA - ARRIBA)
 # ======================================================================
 query_params = st.query_params
 
-# CASO A: Viene desde el mail de recuperación de contraseña (tipo Facebook)
-if "access_token" in query_params and query_params.get("type") == "recovery":
+es_recupero = False
+token_temporal = None
+
+# --- ESTRATEGIA A: Intentar leer parámetros normales (?type=recovery) ---
+if "type" in query_params and query_params.get("type") == "recovery":
+    es_recupero = True
+    token_temporal = query_params.get("access_token")
+elif "access_token" in query_params and query_params.get("type") == "recovery":
+    es_recupero = True
+    token_temporal = query_params.get("access_token")
+
+# --- ESTRATEGIA B: Usar JavaScript por si Supabase manda un numeral (#access_token=...) ---
+if not es_recupero:
+    url_completa = st_javascript("window.location.href")
+    if url_completa and ("#access_token=" in url_completa or "type=recovery" in url_completa):
+        es_recupero = True
+        try:
+            if "#access_token=" in url_completa:
+                token_temporal = url_completa.split("#access_token=")[1].split("&")[0]
+            elif "access_token=" in url_completa:
+                token_temporal = url_completa.split("access_token=")[1].split("&")[0]
+        except Exception:
+            pass
+
+# Si confirmamos que viene del mail de recuperación, congelamos la pantalla en cambiar_clave
+if es_recupero:
     try:
-        res_recovery = supabase.auth.set_session(query_params["access_token"], query_params.get("refresh_token", ""))
-        st.session_state.usuario_recupero = res_recovery.user
+        if token_temporal and "usuario_recupero" not in st.session_state:
+            res_recovery = supabase.auth.set_session(token_temporal, "")
+            st.session_state.usuario_recupero = res_recovery.user
         st.session_state.vista_auth = "cambiar_clave"
     except Exception as e:
-        st.error(f"El enlace de recuperación expiró o es inválido: {e}")
+        st.error(f"Error al validar el enlace: {e}")
+        st.session_state.vista_auth = "cambiar_clave"
 
 # CASO B: Viene desde el mail de confirmación de cuenta nueva
 elif "access_token" in query_params and "refresh_token" in query_params:
@@ -65,7 +91,7 @@ elif "access_token" in query_params and "refresh_token" in query_params:
         pass
 
 # ======================================================================
-# 🔄 3. PERSISTENCIA POR COOKIES (AUTOLOGIN)
+# 🔄 3. PERSISTENCIA POR COOKIES (AUTOLOGIN - SOLO SI NO RECUPERA CLAVE)
 # ======================================================================
 if st.session_state.usuario is None and st.session_state.vista_auth != "cambiar_clave":
     session_guardada = cookies.get("electroia_session")
@@ -138,11 +164,11 @@ if st.session_state.usuario and not st.session_state.historial_conversaciones:
     st.session_state.historial_conversaciones = cargar_historial_desde_db(st.session_state.usuario.id)
 
 # ======================================================================
-# 🔑 PANTALLA 1: CONTROL DE ACCESO
+# 🔑 PANTALLA 1: CONTROL DE ACCESO (SI NO ESTÁ LOGUEADO)
 # ======================================================================
 if st.session_state.usuario is None:
     
-    # --- VISTA A: CAMBIAR CONTRASEÑA (VINCULADA AL CORREO DE RECUPERACIÓN) ---
+    # --- VISTA A: CAMBIAR CONTRASEÑA (LA PÁGINA QUE TE MUESTRA EL MAIL) ---
     if st.session_state.vista_auth == "cambiar_clave":
         st.title("🔑 Restablecer Contraseña")
         st.write("Ingresá los nuevos datos de acceso para tu cuenta de ElectroIA.")
@@ -301,7 +327,6 @@ else:
             st.session_state.vista_auth = "login"
             st.rerun()
 
-    # Manejo del chat actual por defecto
     if st.session_state.chat_actual is None:
         st.session_state.chat_actual = "Chat 1"
         if "Chat 1" not in st.session_state.historial_conversaciones:
@@ -312,12 +337,10 @@ else:
     st.title("ElectroIA")
     st.write(t["subtitulo"])
 
-    # Renderizar mensajes históricos en la interfaz
     for msj in mensajes_actuales:
         with st.chat_message(msj["rol"]):
             st.markdown(msj["contenido"])
 
-    # Entrada del chat del usuario
     if pregunta_usuario := st.chat_input(t["input_placeholder"]):
         with st.chat_message("user"):
             st.markdown(pregunta_usuario)
@@ -328,7 +351,6 @@ else:
                 try:
                     palabras = pregunta_usuario.strip().split()
                     
-                    # Si es una sola palabra, asumimos búsqueda de componente en buscador.py
                     if len(palabras) == 1 and len(mensajes_actuales) <= 2:
                         datos_mouser = buscar_datos_componente(pregunta_usuario)
                         if datos_mouser:
@@ -350,7 +372,6 @@ else:
                     st.markdown(respuesta.content)
                     mensajes_actuales.append({"rol": "assistant", "contenido": respuesta.content})
                     
-                    # Guardar automáticamente la conversación actualizada en Supabase
                     guardar_chat_en_db(st.session_state.usuario.id, st.session_state.chat_actual, mensajes_actuales)
                     st.rerun()
                 except Exception as e:
